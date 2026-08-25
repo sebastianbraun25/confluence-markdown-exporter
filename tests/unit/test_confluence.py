@@ -1882,12 +1882,13 @@ class TestPagePropertiesReportFrozenFetchesAllRows:
 
 
 class TestAttachmentExtension:
-    """draw.io source attachments must resolve to `.drawio` regardless of language.
+    """Vendor source attachments (draw.io, gliffy) must resolve to their correct extensions.
 
     `comment` is localized by Confluence, but `media_type` is not.
     """
 
     DRAWIO_MEDIA_TYPE = "application/vnd.jgraph.mxfile"
+    GLIFFY_MEDIA_TYPE = "application/gliffy+json"
 
     def test_english_comment_resolves_to_drawio(self) -> None:
         att = _make_attachment(
@@ -1913,8 +1914,28 @@ class TestAttachmentExtension:
         att = _make_attachment("4", "guid-4", media_type="image/png", comment="draw.io preview")
         assert att.extension == ".drawio.png"
 
+    def test_gliffy_media_type_resolves_to_gliffy(self) -> None:
+        att = _make_attachment("5", "guid-5", media_type=self.GLIFFY_MEDIA_TYPE, comment="")
+        assert att.extension == ".gliffy"
+
+    def test_gliffy_json_fallback_resolves_to_gliffy(self) -> None:
+        att = _make_attachment(
+            "6", "guid-6", title="diagram.gliffy", media_type="application/json", comment=""
+        )
+        assert att.extension == ".gliffy"
+
+    def test_title_suffix_fallback(self) -> None:
+        att = _make_attachment(
+            "7",
+            "guid-7",
+            title="custom-file.xyz",
+            media_type="application/octet-stream",
+            comment="",
+        )
+        assert att.extension == ".xyz"
+
     def test_regular_png_without_drawio_comment_unaffected(self) -> None:
-        att = _make_attachment("5", "guid-5", media_type="image/png", comment="")
+        att = _make_attachment("8", "guid-8", media_type="image/png", comment="")
         assert att.extension == ".png"
 
 
