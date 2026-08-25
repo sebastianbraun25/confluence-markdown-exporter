@@ -772,20 +772,6 @@ def _gliffy_extension_fallback(att: "Attachment") -> bool:
     return False
 
 
-REGISTERED_EXTENSION_RULES: list[ExtensionRule] = [
-    ExtensionRule(
-        extension=".drawio",
-        media_types=("application/vnd.jgraph.mxfile",),
-        fallback=_drawio_extension_fallback,
-    ),
-    ExtensionRule(
-        extension=".gliffy",
-        media_types=("application/gliffy+json",),
-        fallback=_gliffy_extension_fallback,
-    ),
-]
-
-
 class Attachment(Document):
     id: str
     file_size: int
@@ -928,6 +914,24 @@ class Attachment(Document):
         save_file(filepath, response.content)
         logger.debug("Saved attachment '%s' (%d bytes)", self.title, len(response.content))
         stats.inc_attachments_exported()
+
+
+# Defined after Attachment (not before, like ExtensionRule/Attachment.extension itself) - the
+# forward-referenced "Attachment" type hint on ExtensionRule.fallback is only evaluated by
+# pydantic once an ExtensionRule instance is actually constructed, and under Python 3.13 that
+# evaluation happens eagerly, failing if Attachment does not exist yet in the module namespace.
+REGISTERED_EXTENSION_RULES: list[ExtensionRule] = [
+    ExtensionRule(
+        extension=".drawio",
+        media_types=("application/vnd.jgraph.mxfile",),
+        fallback=_drawio_extension_fallback,
+    ),
+    ExtensionRule(
+        extension=".gliffy",
+        media_types=("application/gliffy+json",),
+        fallback=_gliffy_extension_fallback,
+    ),
+]
 
 
 class Ancestor(Document):
