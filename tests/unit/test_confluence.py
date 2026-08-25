@@ -677,6 +677,66 @@ class TestImageCaptionsInConvertImg:
         assert "My Caption" not in result
 
 
+class TestRawImgDownloadUrlResolution:
+    """Test resolution of raw <img src="/download/attachments/..."> tags (Issue #300)."""
+
+    def test_convert_img_with_relative_download_url(self) -> None:
+        att = _make_attachment("123", "guid-123", title="raw_image.png")
+        page = _make_page(
+            body='<img src="/download/attachments/999/raw_image.png?version=1" alt="My Raw Image">',
+            body_export="",
+            attachments=[att],
+        )
+        _att_path = "{space_name}/attachments/{attachment_file_id}{attachment_extension}"
+        with patch("confluence_markdown_exporter.confluence.settings") as s:
+            s.export.attachment_href = "relative"
+            s.export.attachment_path = _att_path
+            s.export.page_href = "relative"
+            s.export.page_path = "{space_name}/{page_title}.md"
+            s.export.image_captions = False
+            s.export.include_document_title = False
+            s.export.page_breadcrumbs = False
+            conv = Page.Converter(page)
+            result = conv.convert(page.body).strip()
+
+        assert "![My Raw Image](attachments/guid-123.png)" in result
+
+    def test_convert_img_with_absolute_download_url(self) -> None:
+        att = _make_attachment("123", "guid-123", title="raw_image.png")
+        url = "https://confluence.example.com/download/attachments/999/raw_image.png"
+        page = _make_page(
+            body=f'<img src="{url}" alt="Absolute">',
+            body_export="",
+            attachments=[att],
+        )
+        _att_path = "{space_name}/attachments/{attachment_file_id}{attachment_extension}"
+        with patch("confluence_markdown_exporter.confluence.settings") as s:
+            s.export.attachment_href = "relative"
+            s.export.attachment_path = _att_path
+            s.export.page_href = "relative"
+            s.export.page_path = "{space_name}/{page_title}.md"
+            s.export.image_captions = False
+            s.export.include_document_title = False
+            s.export.page_breadcrumbs = False
+            conv = Page.Converter(page)
+            result = conv.convert(page.body).strip()
+
+        assert "![Absolute](attachments/guid-123.png)" in result
+
+    def test_referenced_attachments_includes_raw_download_url_image(self) -> None:
+        att = _make_attachment("123", "guid-123", title="raw_image.png")
+        page = _make_page(
+            body='<p>Some text</p><img src="/download/attachments/999/raw_image.png">',
+            body_export="",
+            attachments=[att],
+        )
+        with patch("confluence_markdown_exporter.confluence.settings") as s:
+            s.export.attachments_export = "referenced"
+            exported = page._attachments_for_export()
+
+        assert att in exported
+
+
 class TestPageFromUrl:
     """Test cases for Page.from_url."""
 
