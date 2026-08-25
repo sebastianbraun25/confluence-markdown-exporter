@@ -2476,6 +2476,11 @@ class Page(Document):
 
             url_src = str(el.get("src", ""))
 
+            if not attachment and (url_src or el.get("href")):
+                attachment = self._attachment_from_download_href(
+                    url_src
+                ) or self._attachment_from_download_href(str(el.get("href", "")))
+
             if ".drawio.png" in url_src:
                 filename = unquote(urlparse(url_src).path.split("/")[-1])
                 drawio_result = self._convert_drawio_embedded_mermaid(filename)
