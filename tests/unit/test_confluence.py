@@ -1301,6 +1301,7 @@ class TestInlineCommentsFrontMatter:
         ]
         page._fetch_page_comments = list
         page._fetch_comment_replies = lambda _cid: []
+        page._truncate_excerpt = Page._truncate_excerpt
         page._render_inline_comments = types.MethodType(Page._render_inline_comments, page)
         page._render_page_comments = types.MethodType(Page._render_page_comments, page)
 
@@ -1310,6 +1311,7 @@ class TestInlineCommentsFrontMatter:
         ):
             s.export.output_path = Path("out")
             s.export.comments_export = "inline"
+            s.export.comment_headings = True
             Page.export_comments_sidecar(page)
 
         assert mock_save.called
@@ -1329,6 +1331,69 @@ class TestInlineCommentsFrontMatter:
         assert "\nsource:" not in content
 
 
+class TestCommentHeadingsConfig:
+    """Test comment_headings setting toggling excerpt headings."""
+
+    def test_comment_headings_disabled(self) -> None:
+        page = MockPage()
+        page.id = 123
+        page.title = "My Page"
+        page.space = MagicMock()
+        page.space.key = "TEAM"
+        page.base_url = "https://example.atlassian.net"
+        page.export_path = Path("TEAM/My Page.md")
+        page._marked_texts = {"ref-1": "marked excerpt"}
+        page._COMMENT_TITLE_MAX_LEN = Page._COMMENT_TITLE_MAX_LEN.default
+        page._fetch_inline_comments = lambda: [
+            {
+                "id": "c1",
+                "extensions": {"inlineProperties": {"markerRef": "ref-1"}},
+                "history": {
+                    "createdBy": {"displayName": "Alice"},
+                    "createdDate": "2026-04-01T10:00:00Z",
+                },
+                "body": {"view": {"value": "<p>nice</p>"}},
+            }
+        ]
+        page._fetch_page_comments = lambda: [
+            {
+                "id": "c2",
+                "history": {
+                    "createdBy": {"displayName": "Bob"},
+                    "createdDate": "2026-04-02T10:00:00Z",
+                },
+                "body": {"view": {"value": "<p>footer comment</p>"}},
+            }
+        ]
+        page._fetch_comment_replies = lambda _cid: []
+        page._truncate_excerpt = Page._truncate_excerpt
+        page._render_inline_comments = types.MethodType(Page._render_inline_comments, page)
+        page._render_page_comments = types.MethodType(Page._render_page_comments, page)
+
+        with (
+            patch("confluence_markdown_exporter.confluence.save_file") as mock_save,
+            patch("confluence_markdown_exporter.confluence.settings") as s,
+        ):
+            s.export.output_path = Path("out")
+            s.export.comments_export = "all"
+            s.export.comment_headings = False
+            Page.export_comments_sidecar(page)
+
+        assert mock_save.called
+        content = mock_save.call_args[0][1]
+
+        # Section headings remain
+        assert "## Inline comments" in content
+        assert "## Page comments" in content
+        # Excerpt '### ' headings must not be present
+        assert "### " not in content
+        # Authors and bodies are present
+        assert "**Alice** · 2026-04-01" in content
+        assert "nice" in content
+        assert "**Bob** · 2026-04-02" in content
+        assert "footer comment" in content
+
+
 def _make_comments_page(
     *,
     inline_comments: list[dict] | None = None,
@@ -1344,7 +1409,8 @@ def _make_comments_page(
     page.base_url = "https://example.atlassian.net"
     page.export_path = Path("TEAM/My Page.md")
     page._marked_texts = marked_texts or {}
-    page._COMMENT_TITLE_MAX_LEN = Page._COMMENT_TITLE_MAX_LEN.default
+    page._COMMENT_TITLE_MAX_LEN = Page._COMMENT_TITLE_MAX_LEN
+    page._truncate_excerpt = Page._truncate_excerpt
     page._fetch_inline_comments = lambda: list(inline_comments or [])
     page._fetch_page_comments = lambda: list(page_comments or [])
     replies_map = replies or {}
@@ -1510,6 +1576,36 @@ class TestPageCommentsSidecarBody:
 
         ids = [c["id"] for c in results]
         assert ids == ["open1", "open2"]
+
+
+class TestCommentExcerptTruncation:
+    """Test clean truncation of comment excerpt headings (Issue #301)."""
+
+    def test_truncate_excerpt_strips_markdown_links(self) -> None:
+        text = "siehe auch US [SSMPA-2656](https://jira.example.com/browse/SSMPA-2656) fuer Details"
+        result = Page._truncate_excerpt(text, max_len=60)
+        assert result == "siehe auch US SSMPA-2656 fuer Details"
+
+    def test_truncate_excerpt_strips_markdown_images(self) -> None:
+        text = "siehe Bild ![Screenshot](https://example.com/img.png) und Text"
+        result = Page._truncate_excerpt(text, max_len=60)
+        assert result == "siehe Bild Screenshot und Text"
+
+    def test_truncate_excerpt_strips_wiki_links(self) -> None:
+        text = "siehe [[Page Title|Display Text]] oder [[Simple Page]]"
+        result = Page._truncate_excerpt(text, max_len=60)
+        assert result == "siehe Display Text oder Simple Page"
+
+    def test_truncate_excerpt_word_boundary(self) -> None:
+        text = "Das ist ein sehr langer Kommentartext der definitiv gekuerzt werden muss"
+        result = Page._truncate_excerpt(text, max_len=30)
+        assert result == "Das ist ein sehr langer…"
+        assert not result.endswith(" l…")
+
+    def test_truncate_excerpt_no_truncation_when_short(self) -> None:
+        text = "Kurzer Kommentar"
+        result = Page._truncate_excerpt(text, max_len=60)
+        assert result == "Kurzer Kommentar"
 
 
 class TestPagePropertiesReportDataview:
