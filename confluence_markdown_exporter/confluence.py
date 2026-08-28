@@ -14,6 +14,7 @@ import os
 import re
 import urllib.parse
 import zlib
+from collections.abc import Callable
 from collections.abc import Set
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
@@ -37,6 +38,7 @@ from markdownify import ATX
 from markdownify import MarkdownConverter
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic.dataclasses import dataclass
 from requests import HTTPError
 from requests import RequestException
 from rich.progress import BarColumn
@@ -728,6 +730,48 @@ class Document(BaseModel):
         }
 
 
+@dataclass
+class ExtensionRule:
+    """Rule for resolving file extensions for vendor-specific attachments."""
+
+    extension: str
+    media_types: tuple[str, ...]
+    fallback: Callable[["Attachment"], str | bool | None] | None = None
+
+    def resolve(self, att: "Attachment") -> str | None:
+        """Attempt to resolve the file extension for *att*.
+
+        Checks primary media types first; if they do not match, executes the
+        rule's fallback function (if any) before returning None.
+        """
+        if att.media_type in self.media_types:
+            return self.extension
+
+        if self.fallback:
+            result = self.fallback(att)
+            if isinstance(result, str):
+                return result
+            if result is True:
+                return self.extension
+
+        return None
+
+
+def _drawio_extension_fallback(att: "Attachment") -> str | bool | None:
+    """Fallback for draw.io attachments (e.g. preview images)."""
+    if att.media_type == "image/png" and att.comment and "draw.io preview" in att.comment.lower():
+        return ".drawio.png"
+    return None
+
+
+def _gliffy_extension_fallback(att: "Attachment") -> bool:
+    """Fallback for Gliffy diagrams (e.g. when media_type is generic JSON/XML)."""
+    if att.media_type in ("application/json", "application/xml", "text/xml"):
+        text = f"{att.comment or ''} {att.title or ''}".lower()
+        return "gliffy" in text or att.title.lower().endswith(".gliffy")
+    return False
+
+
 class Attachment(Document):
     id: str
     file_size: int
@@ -740,12 +784,24 @@ class Attachment(Document):
 
     @property
     def extension(self) -> str:
-        if self.comment == "draw.io diagram" and self.media_type == "application/vnd.jgraph.mxfile":
-            return ".drawio"
-        if self.comment == "draw.io preview" and self.media_type == "image/png":
-            return ".drawio.png"
+        # 1. Registered vendor-specific rules (media type match -> fallback)
+        for rule in REGISTERED_EXTENSION_RULES:
+            if ext := rule.resolve(self):
+                return ext
 
-        return mimetypes.guess_extension(self.media_type) or ""
+        # 2. Standard Python mimetypes module
+        guessed = mimetypes.guess_extension(self.media_type)
+        if guessed and guessed != ".bin":
+            return guessed
+
+        # 3. Final fallback: extract extension from attachment title if present
+        if self.title and "." in self.title:
+            ext = Path(self.title).suffix
+            max_ext_len = 10
+            if ext and len(ext) <= max_ext_len:
+                return ext
+
+        return guessed or ""
 
     @property
     def filename(self) -> str:
@@ -858,6 +914,24 @@ class Attachment(Document):
         save_file(filepath, response.content)
         logger.debug("Saved attachment '%s' (%d bytes)", self.title, len(response.content))
         stats.inc_attachments_exported()
+
+
+# Defined after Attachment (not before, like ExtensionRule/Attachment.extension itself) - the
+# forward-referenced "Attachment" type hint on ExtensionRule.fallback is only evaluated by
+# pydantic once an ExtensionRule instance is actually constructed, and under Python 3.13 that
+# evaluation happens eagerly, failing if Attachment does not exist yet in the module namespace.
+REGISTERED_EXTENSION_RULES: list[ExtensionRule] = [
+    ExtensionRule(
+        extension=".drawio",
+        media_types=("application/vnd.jgraph.mxfile",),
+        fallback=_drawio_extension_fallback,
+    ),
+    ExtensionRule(
+        extension=".gliffy",
+        media_types=("application/gliffy+json",),
+        fallback=_gliffy_extension_fallback,
+    ),
+]
 
 
 class Ancestor(Document):
